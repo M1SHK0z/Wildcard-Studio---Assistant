@@ -5,25 +5,18 @@ from discord.ext import commands
 import threading
 from flask import Flask, request, jsonify
 import requests
-import logging
 import uuid
-from collections import defaultdict
 
 TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-GUILD_ID = int(os.environ["GUILD_ID"])
 
-PYTHON_SERVER_URL = "https://your-server-url/push_payload"
+GUILD_ID = 1497246825646788650
 
-ALLOWED_ROLES = ["Creator", "Moderator", "Sys"]
-
+# ---------------- FLASK ----------------
 app = Flask(__name__)
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
 
 payload_queue = []
 queue_lock = threading.Lock()
 
-# ---------------- FLASK ----------------
 @app.route("/push_payload", methods=["POST"])
 def push_payload():
     try:
@@ -35,12 +28,14 @@ def push_payload():
         print("push error:", e)
         return jsonify({"status": "error"}), 400
 
+
 @app.route("/pop_payload", methods=["GET"])
 def pop_payload():
     with queue_lock:
         if payload_queue:
             return jsonify(payload_queue.pop(0)), 200
         return jsonify({}), 200
+
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -50,23 +45,24 @@ def run_flask():
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def has_allowed_role(interaction: discord.Interaction) -> bool:
-    if not interaction.guild:
-        return False
-    return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
-
+# ---------------- READY ----------------
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}!")
+    print(f"Logged in as {bot.user}")
+
     try:
         synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"Synced {len(synced)} commands.")
+        print(f"Synced {len(synced)} commands")
     except Exception as e:
         print(e)
 
-# ---------------- /MESSAGE COMMAND ----------------
-@bot.tree.command(name="message", description="Send message to Roblox", guild=discord.Object(id=GUILD_ID))
-@app_commands.describe(text="Message to send to Roblox")
+# ---------------- /MESSAGE ----------------
+@bot.tree.command(
+    name="message",
+    description="Send message to Roblox",
+    guild=discord.Object(id=GUILD_ID)
+)
+@app_commands.describe(text="Message to send")
 async def message(interaction: discord.Interaction, text: str):
     try:
         payload = {
@@ -76,14 +72,17 @@ async def message(interaction: discord.Interaction, text: str):
             "author": str(interaction.user)
         }
 
-        requests.post(PYTHON_SERVER_URL, json=payload, timeout=5)
+        requests.post(
+            "https://your-server-url/push_payload",
+            json=payload,
+            timeout=5
+        )
 
         embed = discord.Embed(
             title="Success",
             description="Message sent successfully",
             color=discord.Color.green()
         )
-
         embed.add_field(name="Content", value=text, inline=False)
 
     except Exception as e:
@@ -91,7 +90,7 @@ async def message(interaction: discord.Interaction, text: str):
 
         embed = discord.Embed(
             title="Failed",
-            description="Message failed to send",
+            description="Message failed",
             color=discord.Color.red()
         )
 
