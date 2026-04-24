@@ -1,70 +1,103 @@
 import os
 import discord
+from discord import app_commands
 from discord.ext import commands
-from flask import Flask, request, jsonify
 import threading
+from flask import Flask, request, jsonify
+import requests
+import logging
+import uuid
+from collections import defaultdict
 
 TOKEN = os.environ["DISCORD_BOT_TOKEN"]
+GUILD_ID = int(os.environ["GUILD_ID"])
 
-CHANNEL_ID = 1497247654977994752
-GUILD_ID = 1497246825646788650
+PYTHON_SERVER_URL = "https://your-server-url/push_payload"
 
-ROBLOX_ENDPOINT = "https://your-server-url/pop_payload"
+ALLOWED_ROLES = ["Creator", "Moderator", "Sys"]
 
-# -------- DISCORD --------
-intents = discord.Intents.default()
-intents.message_content = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-# -------- QUEUE --------
-payload_queue = []
-
-# -------- FLASK --------
 app = Flask(__name__)
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
+payload_queue = []
+queue_lock = threading.Lock()
+
+# ---------------- FLASK ----------------
+@app.route("/push_payload", methods=["POST"])
+def push_payload():
+    try:
+        data = request.get_json()
+        with queue_lock:
+            payload_queue.append(data)
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        print("push error:", e)
+        return jsonify({"status": "error"}), 400
 
 @app.route("/pop_payload", methods=["GET"])
 def pop_payload():
-    if payload_queue:
-        return jsonify(payload_queue.pop(0)), 200
-    return jsonify({}), 200
+    with queue_lock:
+        if payload_queue:
+            return jsonify(payload_queue.pop(0)), 200
+        return jsonify({}), 200
 
 def run_flask():
-    app.run(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
-# -------- DISCORD LISTENER --------
+# ---------------- DISCORD ----------------
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+def has_allowed_role(interaction: discord.Interaction) -> bool:
+    if not interaction.guild:
+        return False
+    return any(r.name in ALLOWED_ROLES for r in interaction.user.roles)
+
 @bot.event
-async def on_message(msg: discord.Message):
-    if msg.author.bot:
-        return
-    
-    if msg.channel.id != CHANNEL_ID:
-        return
-
+async def on_ready():
+    print(f"Logged in as {bot.user}!")
     try:
-        data = {
-            "content": msg.content,
-            "author": str(msg.author)
+        synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"Synced {len(synced)} commands.")
+    except Exception as e:
+        print(e)
+
+# ---------------- /MESSAGE COMMAND ----------------
+@bot.tree.command(name="message", description="Send message to Roblox", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(text="Message to send to Roblox")
+async def message(interaction: discord.Interaction, text: str):
+    try:
+        payload = {
+            "id": str(uuid.uuid4()),
+            "type": "message",
+            "content": text,
+            "author": str(interaction.user)
         }
 
-        payload_queue.append(data)
+        requests.post(PYTHON_SERVER_URL, json=payload, timeout=5)
 
         embed = discord.Embed(
-            title="Sent",
+            title="Success",
             description="Message sent successfully",
             color=discord.Color.green()
         )
+
+        embed.add_field(name="Content", value=text, inline=False)
+
     except Exception as e:
         print(e)
+
         embed = discord.Embed(
             title="Failed",
-            description="Failed to send",
+            description="Message failed to send",
             color=discord.Color.red()
         )
 
-    await msg.channel.send(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# -------- START --------
+# ---------------- START ----------------
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot.run(TOKEN)
