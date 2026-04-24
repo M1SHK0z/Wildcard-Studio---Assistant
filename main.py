@@ -16,8 +16,6 @@ app = Flask(__name__)
 
 payload_queue = []
 command_queue = []
-server_players = []
-
 lock = threading.Lock()
 
 # ---------------- FLASK ----------------
@@ -35,7 +33,6 @@ def pop_payload():
         return jsonify(payload_queue.pop(0) if payload_queue else {})
 
 
-# ---------------- COMMANDS (GAMEBAN) ----------------
 @app.route("/push_command", methods=["POST"])
 def push_command():
     data = request.get_json()
@@ -50,74 +47,87 @@ def pop_command():
         return jsonify(command_queue.pop(0) if command_queue else {})
 
 
-# ---------------- PLAYERS LIST ----------------
-@app.route("/push_players", methods=["POST"])
-def push_players():
-    global server_players
-    data = request.get_json()
-    server_players = data.get("players", [])
-    return jsonify({"ok": True})
-
-
-@app.route("/pop_players", methods=["GET"])
-def pop_players():
-    return jsonify({"players": server_players})
-
-
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
 
 # ---------------- DISCORD ----------------
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+
 @bot.event
 async def on_ready():
-    print("Logged in")
+    print("Ready")
     await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
 
 
-# ---------------- MESSAGE ----------------
+# ---------------- FAST SEND FUNCTION ----------------
+def fast_post(url, payload):
+    try:
+        requests.post(url, json=payload, timeout=2)  # 🔥 FAST timeout
+        return True
+    except:
+        return False
+
+
+# ---------------- /MESSAGE ----------------
 @bot.tree.command(name="message", guild=discord.Object(id=GUILD_ID))
 async def message(interaction: discord.Interaction, text: str):
-    requests.post(BASE_URL + "/push_payload", json={
+
+    ok = fast_post(BASE_URL + "/push_payload", {
         "type": "message",
         "content": text,
         "author": interaction.user.name
     })
 
-    await interaction.response.send_message("Sent", ephemeral=True)
+    if ok:
+        embed = discord.Embed(
+            title="Success",
+            description="Message sent successfully",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Content", value=text, inline=False)
+    else:
+        embed = discord.Embed(
+            title="Failed",
+            description="Message failed",
+            color=discord.Color.red()
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# ---------------- GAMEBAN COMMAND ----------------
+# ---------------- /GAMEBAN ----------------
 @bot.tree.command(name="gameban", guild=discord.Object(id=GUILD_ID))
-@app_commands.describe(username="Player", action="ban/unban/temp", duration="Only temp")
-@app_commands.choices(
-    action=[
-        app_commands.Choice(name="Ban", value="ban"),
-        app_commands.Choice(name="Unban", value="unban"),
-        app_commands.Choice(name="Temp", value="temp")
-    ],
-    duration=[
-        app_commands.Choice(name="1 Day", value="1d"),
-        app_commands.Choice(name="7 Days", value="7d"),
-        app_commands.Choice(name="30 Days", value="30d")
-    ]
-)
-async def gameban(interaction: discord.Interaction, username: str, action: app_commands.Choice[str], duration: app_commands.Choice[str] = None):
+async def gameban(interaction: discord.Interaction, username: str, action: str, duration: str = None):
 
-    requests.post(BASE_URL + "/push_command", json={
+    ok = fast_post(BASE_URL + "/push_command", {
         "type": "gameban",
         "user": username,
-        "action": action.value,
-        "duration": duration.value if duration else None
+        "action": action,
+        "duration": duration
     })
 
-    await interaction.response.send_message(f"Sent {action.value} for {username}", ephemeral=True)
+    if ok:
+        embed = discord.Embed(
+            title="Success",
+            description="Command sent successfully",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="User", value=username, inline=True)
+        embed.add_field(name="Action", value=action, inline=True)
+    else:
+        embed = discord.Embed(
+            title="Failed",
+            description="Command failed",
+            color=discord.Color.red()
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+# ---------------- START ----------------
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot.run(TOKEN)
