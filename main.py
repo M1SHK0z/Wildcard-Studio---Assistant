@@ -11,19 +11,24 @@ TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 
 GUILD_ID = 1497246825646788650
 
-# ---------------- FLASK ----------------
+BASE_URL = "https://wildcard-studio-assistant.onrender.com"
+
 app = Flask(__name__)
 
 payload_queue = []
 queue_lock = threading.Lock()
 
+# ---------------- FLASK ----------------
 @app.route("/push_payload", methods=["POST"])
 def push_payload():
     try:
         data = request.get_json()
+
         with queue_lock:
             payload_queue.append(data)
+
         return jsonify({"status": "ok"}), 200
+
     except Exception as e:
         print("push error:", e)
         return jsonify({"status": "error"}), 400
@@ -45,18 +50,13 @@ def run_flask():
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------------- READY ----------------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
-    try:
-        synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"Synced {len(synced)} commands")
-    except Exception as e:
-        print(e)
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
 
-# ---------------- /MESSAGE ----------------
+# ---------------- MESSAGE COMMAND ----------------
 @bot.tree.command(
     name="message",
     description="Send message to Roblox",
@@ -72,11 +72,14 @@ async def message(interaction: discord.Interaction, text: str):
             "author": str(interaction.user)
         }
 
-        requests.post(
-            "https://wildcard-studio-assistant.onrender.com/pop_payload",
+        r = requests.post(
+            BASE_URL + "/push_payload",
             json=payload,
-            timeout=5
+            timeout=10
         )
+
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}")
 
         embed = discord.Embed(
             title="Success",
@@ -86,11 +89,11 @@ async def message(interaction: discord.Interaction, text: str):
         embed.add_field(name="Content", value=text, inline=False)
 
     except Exception as e:
-        print(e)
+        print("ERROR:", e)
 
         embed = discord.Embed(
             title="Failed",
-            description="Message failed",
+            description=str(e),
             color=discord.Color.red()
         )
 
