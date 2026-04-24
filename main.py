@@ -73,7 +73,7 @@ async def message(interaction: discord.Interaction, text: str):
         }
 
         requests.post(
-            "https://your-server-url/push_payload",
+            "https://wildcard-studio-assistant.onrender.com/pop_payload",
             json=payload,
             timeout=5
         )
