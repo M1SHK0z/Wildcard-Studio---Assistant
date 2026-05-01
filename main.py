@@ -84,7 +84,6 @@ def ensure_defaults():
         DB.set(DEFAULT_SWORDS)
         return
 
-    # Only add missing swords (does NOT overwrite existing)
     for name, data in DEFAULT_SWORDS.items():
         if name not in current:
             DB.child(name).set(data)
@@ -184,6 +183,54 @@ async def value(interaction: discord.Interaction, name: str, new_value: str):
         embed=discord.Embed(
             title="Successful",
             description=f"{name} updated.",
+            color=discord.Color.green()
+        )
+    )
+
+# === /DEMAND ===
+@bot.tree.command(name="demand", description="Change demand", guild=discord.Object(id=GUILD_ID))
+@app_commands.autocomplete(name=name_autocomplete)
+@app_commands.choices(new_demand=[
+    app_commands.Choice(name="Low", value="Low"),
+    app_commands.Choice(name="Medium", value="Medium"),
+    app_commands.Choice(name="High", value="High"),
+    app_commands.Choice(name="Extremely High", value="Extremely High"),
+])
+async def demand(interaction: discord.Interaction, name: str, new_demand: app_commands.Choice[str]):
+
+    if not await check_channel(interaction, VALUE_CHANNEL_ID):
+        return
+
+    role = discord.utils.get(interaction.user.roles, name="Value Adjuster")
+
+    if role is None:
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
+        return
+
+    data = get_one(name)
+
+    if not data:
+        await interaction.response.send_message("Sword not found.", ephemeral=True)
+        return
+
+    update_one(name, {"demand": new_demand.value})
+
+    embed = discord.Embed(
+        title="✅ Demand Updated",
+        description=f"{interaction.user.mention} updated **{name}** → **{new_demand.value}**",
+        color=discord.Color.green()
+    )
+
+    embed.set_thumbnail(url=data.get("image") or FALLBACK_IMAGE)
+
+    log = bot.get_channel(LOG_CHANNEL_ID)
+    if log:
+        await log.send(embed=embed)
+
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="Successful",
+            description=f"{name} demand updated.",
             color=discord.Color.green()
         )
     )
